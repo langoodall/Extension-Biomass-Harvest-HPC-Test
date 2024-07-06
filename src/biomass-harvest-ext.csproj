@@ -25,6 +25,7 @@
     <PackageReleaseNotes></PackageReleaseNotes>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
   </PropertyGroup>
+
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|AnyCPU'">
     <OutputPath>..\..\build\extensions</OutputPath>
   </PropertyGroup>
@@ -33,7 +34,11 @@
     <PackageReference Include="Landis.Core" Version="2.0.0" />
     <PackageReference Include="Microsoft.CSharp" Version="4.7.0" />
   </ItemGroup>
-  
+
+  <ItemGroup>
+    <PackageReference Include="log4net" Version="2.0.12" />
+  </ItemGroup>
+
   <ItemGroup>
     <Reference Include="Landis.Library.BiomassHarvest-v3">
       <HintPath>..\..\Support-Library-Dlls-v8\Landis.Library.BiomassHarvest-v3.dll</HintPath>
