@@ -47,8 +47,8 @@
     <Reference Include="Landis.Library.SiteHarvest-v2">
       <HintPath>..\..\Support-Library-Dlls-v8\Landis.Library.SiteHarvest-v2.dll</HintPath>
     </Reference>
-    <Reference Include="Landis.Library.Succession-v9">
-      <HintPath>..\..\Support-Library-Dlls-v8\Landis.Library.Succession-v9.dll</HintPath>
+    <Reference Include="Landis.Library.Succession-v8">
+      <HintPath>..\..\Support-Library-Dlls-v7\Landis.Library.Succession-v8.dll</HintPath>
     </Reference>
     <Reference Include="Landis.Library.UniversalCohorts-v1">
       <HintPath>..\..\Support-Library-Dlls-v8\Landis.Library.UniversalCohorts-v1.dll</HintPath>
