@@ -1,5 +1,5 @@
 # LANDIS-II support library GitHub URL
-$master = "https://github.com/LANDIS-II-Foundation/Support-Library-Dlls-v8/raw/main/"
+$master = "https://github.com/LANDIS-II-Foundation/Support-Library-Dlls-v7/raw/main/"
 
 
 #************************************************
