@@ -463,7 +463,7 @@ namespace Landis.Extension.BiomassHarvest
             }
         }
 
-        public override void AddCohortData()
+        public void AddCohortData()
         {
             return;
         }
