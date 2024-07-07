@@ -10,7 +10,7 @@ $dlls = "Landis.Library.BiomassHarvest-v3.dll",
 "Landis.Library.HarvestManagement-v4.dll",
 "Landis.Library.SiteHarvest-v2.dll",
 "Landis.Library.Metadata-v2.dll",
-"Landis.Library.Succession-v9.dll",
+"Landis.Library.Succession-v8.dll",
 "Landis.Library.UniversalCohorts-v1.dll"
 #************************************************
 
