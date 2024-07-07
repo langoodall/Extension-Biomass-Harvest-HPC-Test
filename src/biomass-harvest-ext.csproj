@@ -25,7 +25,6 @@
     <PackageReleaseNotes></PackageReleaseNotes>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
   </PropertyGroup>
-
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|AnyCPU'">
     <OutputPath>..\..\build\extensions</OutputPath>
   </PropertyGroup>
@@ -34,11 +33,7 @@
     <PackageReference Include="Landis.Core" Version="2.0.0" />
     <PackageReference Include="Microsoft.CSharp" Version="4.7.0" />
   </ItemGroup>
-
-  <ItemGroup>
-    <PackageReference Include="log4net" Version="2.0.8" />
-  </ItemGroup>
-
+  
   <ItemGroup>
     <Reference Include="Landis.Library.BiomassHarvest-v3">
       <HintPath>..\..\Support-Library-Dlls-v8\Landis.Library.BiomassHarvest-v3.dll</HintPath>
@@ -53,7 +48,7 @@
       <HintPath>..\..\Support-Library-Dlls-v8\Landis.Library.SiteHarvest-v2.dll</HintPath>
     </Reference>
     <Reference Include="Landis.Library.Succession-v9">
-      <HintPath>..\..\Support-Library-Dlls-v8\Landis.Library.Succession-v9.dll</HintPath>
+      <HintPath>..\..\Support-Library-Dlls-v7\Landis.Library.Succession-v8.dll</HintPath>
     </Reference>
     <Reference Include="Landis.Library.UniversalCohorts-v1">
       <HintPath>..\..\Support-Library-Dlls-v8\Landis.Library.UniversalCohorts-v1.dll</HintPath>
