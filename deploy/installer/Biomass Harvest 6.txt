@@ -6,4 +6,4 @@ Type         disturbance:harvest
 Assembly     Landis.Extension.BiomassHarvest-v6
 Class        Landis.Extension.BiomassHarvest.PlugIn
 Description  "Harvesting for universal cohorts"
-CoreVersion  8.0
+CoreVersion  7.0
