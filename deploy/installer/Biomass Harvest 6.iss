@@ -10,9 +10,9 @@
 #define BuildDir "..\..\src\bin\Debug"
 
 ; LANDIS-II installation directories
-#define ExtDir "C:\Program Files\LANDIS-II-v8\extensions"
-#define AppDir "C:\Program Files\LANDIS-II-v8"
-#define LandisPlugInDir "C:\Program Files\LANDIS-II-v8\plug-ins-installer-files"
+#define ExtDir "C:\Program Files\LANDIS-II-v7\extensions"
+#define AppDir "C:\Program Files\LANDIS-II-v7"
+#define LandisPlugInDir "C:\Program Files\LANDIS-II-v7\plug-ins-installer-files"
 #define ExtensionsCmd AppDir + "\commands\landis-ii-extensions.cmd"
 
 [Setup]
@@ -46,7 +46,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 ; This .dll IS the extension (ie, the extension's assembly)
 ; NB: Do not put an additional version number in the file name of this .dll
 ; (The name of this .dll is defined in the extension's \src\*.csproj file)
-Source: {#BuildDir}\Landis.Extension.BiomassHarvest-v6.dll; DestDir: {#ExtDir}; Flags: ignoreversion
+Source: {#BuildDir}\Landis.Extension.BiomassHarvest-v4.dll; DestDir: {#ExtDir}; Flags: ignoreversion
 
 ; Requisite auxiliary libraries
 ; NB. These libraries are used by other extensions and thus are never uninstalled.
