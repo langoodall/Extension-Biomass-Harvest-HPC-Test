@@ -1,55 +1,76 @@
-// Contributors:
-//   James Domingo, Green Code LLC
-//   Robert M. Scheller
+//  Authors: Robert Scheller, Melissa Lucash
 
-using Landis.Utilities;
-using Landis.SpatialModeling;
-using Landis.Library.UniversalCohorts;
-using Landis.Library.BiomassHarvest;
-using Landis.Library.HarvestManagement;
-using Landis.Library.Metadata;
 using Landis.Core;
+using Landis.SpatialModeling;
+using Landis.Utilities;
 
+using Landis.Library.InitialCommunities;
+using Landis.Library.Succession;
+using Landis.Library.LeafBiomassCohorts;
+using Landis.Library.Climate;
+using Landis.Library.Metadata;
+
+using System;
 using System.Collections.Generic;
+using System.Linq;
+using MathNet.Numerics.Distributions;
 
-using HarvestMgmtLib = Landis.Library.HarvestManagement;
 
-namespace Landis.Extension.BiomassHarvest
+
+namespace Landis.Extension.Succession.NECN
 {
     public class PlugIn
-        : HarvestExtensionMain 
+        : Landis.Library.Succession.ExtensionBase
     {
-        public static readonly string ExtensionName = "Biomass Harvest";
-        
-        private IManagementAreaDataset managementAreas;
-        private PrescriptionMaps prescriptionMaps;
-        private BiomassMaps biomassMaps;
-        private string nameTemplate;
-        public static MetadataTable<EventsLog> eventLog;
-        public static MetadataTable<SummaryLog> summaryLog;
-        private static bool running;
-
-        static int[] totalSites;
-        static int[] totalDamagedSites;
-        static int[,] totalSpeciesCohorts;
-        static int[] totalCohortsKilled;
-        static int[] totalCohortsDamaged;
-        // 2015-09-14 LCB Track prescriptions as they are reported in summary log so we don't duplicate
-        static bool[] prescriptionReported;
-        static double[,] totalSpeciesBiomass;
-        static double[] totalBiomassRemoved;
-
-        private static IParameters parameters;
-
+        public static readonly string ExtensionName = "NECN Succession";
         private static ICore modelCore;
+        public static IInputParameters Parameters;
+        public static double[] ShadeLAI;
+        public static double AnnualWaterBalance;
+
+        //private List<ISufficientLight> sufficientLight;
+        public static string SoilCarbonMapNames = null;
+        public static int SoilCarbonMapFrequency;
+        public static string SoilNitrogenMapNames = null;
+        public static int SoilNitrogenMapFrequency;
+        public static string ANPPMapNames = null;
+        public static int ANPPMapFrequency;
+        public static string ANEEMapNames = null;
+        public static int ANEEMapFrequency;
+        public static string TotalCMapNames = null;
+        public static int TotalCMapFrequency;
+        public static string InputCommunityMapNames = null;
+        public static int InputCommunityMapFrequency;
+        public static int SuccessionTimeStep;
+        public static double ProbEstablishAdjust;
+        public static double StormFlowOverride = 0.0;
 
 
+        public static int FutureClimateBaseYear;
+        //public static int B_MAX;
+        private ICommunity initialCommunity;
+
+        public static int[] SpeciesByPlant;
+        public static int[] SpeciesBySerotiny;
+        public static int[] SpeciesByResprout;
+        public static int[] SpeciesBySeed;
 
         //---------------------------------------------------------------------
 
         public PlugIn()
             : base(ExtensionName)
         {
+        }
+
+        //---------------------------------------------------------------------
+
+        public override void LoadParameters(string dataFile,
+                                            ICore mCore)
+        {
+            modelCore = mCore;
+            InputParametersParser parser = new InputParametersParser();
+            Parameters = Landis.Data.Load<IInputParameters>(dataFile, parser);
+
         }
 
         //---------------------------------------------------------------------
@@ -62,76 +83,103 @@ namespace Landis.Extension.BiomassHarvest
             }
         }
 
-        //---------------------------------------------------------------------
-        
-        public override void LoadParameters(string dataFile,
-                                            ICore mCore)
-        {
-            modelCore = mCore;
-
-            //Cohort.AgeOnlyDeathEvent += CohortKilledByAgeOnlyDisturbance;
-            //Cohort.PartialMortality += CohortKilledByAgeOnlyDisturbance;
-
-            HarvestMgmtLib.Main.InitializeLib(modelCore);
-            HarvestExtensionMain.SiteHarvestedEvent += SiteHarvested;
-            HarvestExtensionMain.RepeatStandHarvestedEvent += RepeatStandHarvested;
-            HarvestExtensionMain.RepeatPrescriptionFinishedEvent += RepeatPrescriptionHarvested;
-            Landis.Library.BiomassHarvest.Main.InitializeLib(modelCore);
-
-            ParametersParser parser = new ParametersParser(modelCore.Species);
-
-            HarvestMgmtLib.IInputParameters baseParameters = Landis.Data.Load<IInputParameters>(dataFile, parser);
-            parameters = baseParameters as IParameters;
-            if (parser.RoundedRepeatIntervals.Count > 0)
-            {
-                ModelCore.UI.WriteLine("NOTE: The following repeat intervals were rounded up to");
-                ModelCore.UI.WriteLine("      ensure they were multiples of the harvest timestep:");
-                ModelCore.UI.WriteLine("      File: {0}", dataFile);
-                foreach (RoundedInterval interval in parser.RoundedRepeatIntervals)
-                    ModelCore.UI.WriteLine("      At line {0}, the interval {1} rounded up to {2}",
-                                 interval.LineNumber,
-                                 interval.Original,
-                                 interval.Adjusted);
-            }
-            if (parser.ParserNotes.Count > 0)
-            {
-                foreach (List<string> nList in parser.ParserNotes)
-                {
-                    foreach (string nLine in nList)
-                    {
-                        PlugIn.ModelCore.UI.WriteLine(nLine);
-                    }
-                }
-            }
-        }
 
         //---------------------------------------------------------------------
 
         public override void Initialize()
         {
-            //event_id = 1;
-            HarvestMgmtLib.SiteVars.GetExternalVars();
-            MetadataHandler.InitializeMetadata(parameters.Timestep, parameters.PrescriptionMapNames, parameters.EventLog, parameters.SummaryLog);
-            SiteVars.Initialize();
-            Timestep = parameters.Timestep;
-            managementAreas = parameters.ManagementAreas;
-            ModelCore.UI.WriteLine("   Reading management-area map {0} ...", parameters.ManagementAreaMap);
-            ManagementAreas.ReadMap(parameters.ManagementAreaMap, managementAreas);
+            PlugIn.ModelCore.UI.WriteLine("Initializing {0} ...", ExtensionName);
+            Timestep = Parameters.Timestep;
+            SuccessionTimeStep = Timestep;
+            //sufficientLight = Parameters.LightClassProbabilities;
+            ProbEstablishAdjust = Parameters.ProbEstablishAdjustment;
+            MetadataHandler.InitializeMetadata(Timestep, modelCore, SoilCarbonMapNames, SoilNitrogenMapNames, ANPPMapNames, ANEEMapNames, TotalCMapNames); 
 
-            ModelCore.UI.WriteLine("   Reading stand map {0} ...", parameters.StandMap);
-            Stands.ReadMap(parameters.StandMap);
+            FunctionalType.Initialize(Parameters);
+            SpeciesData.Initialize(Parameters);
+            SiteVars.Initialize(); // chihiro; this method use functional type data for initializing decay value
+            ReadMaps.ReadSoilDepthMap(Parameters.SoilDepthMapName);
+            ReadMaps.ReadSoilDrainMap(Parameters.SoilDrainMapName);
+            ReadMaps.ReadSoilBaseFlowMap(Parameters.SoilBaseFlowMapName);
+            ReadMaps.ReadSoilStormFlowMap(Parameters.SoilStormFlowMapName);
+            ReadMaps.ReadFieldCapacityMap(Parameters.SoilFieldCapacityMapName);
+            ReadMaps.ReadWiltingPointMap(Parameters.SoilWiltingPointMapName);
+            ReadMaps.ReadPercentSandMap(Parameters.SoilPercentSandMapName);
+            ReadMaps.ReadPercentClayMap(Parameters.SoilPercentClayMapName);
+            ReadMaps.ReadSoilCNMaps(Parameters.InitialSOM1CSurfaceMapName,
+                Parameters.InitialSOM1NSurfaceMapName,
+                Parameters.InitialSOM1CSoilMapName,
+                Parameters.InitialSOM1NSoilMapName,
+                Parameters.InitialSOM2CMapName,
+                Parameters.InitialSOM2NMapName,
+                Parameters.InitialSOM3CMapName,
+                Parameters.InitialSOM3NMapName);
+            ReadMaps.ReadDeadWoodMaps(Parameters.InitialDeadSurfaceMapName, Parameters.InitialDeadSoilMapName);
 
-            //finish initializing SiteVars
-            HarvestMgmtLib.SiteVars.GetExternalVars();
+            //Optional drought mortality maps
+            if (Parameters.NormalSWAMapName != null)
+            {
+                ReadMaps.ReadNormalSWAMap(Parameters.NormalSWAMapName);
+            }
+            if (Parameters.NormalCWDMapName != null)
+            {
+                ReadMaps.ReadNormalCWDMap(Parameters.NormalCWDMapName);
+            }
+            if (Parameters.NormalTempMapName != null)
+            {
+                ReadMaps.ReadNormalTempMap(Parameters.NormalTempMapName);
+            }
 
-            foreach (ManagementArea mgmtArea in managementAreas)
-                mgmtArea.FinishInitialization();
+            //Optional topographic maps for adjusting PET
+            if (Parameters.SlopeMapName != null)
+            {
+                ReadMaps.ReadSlopeMap(Parameters.SlopeMapName);
+            }
+            if (Parameters.AspectMapName != null)
+            {
+                ReadMaps.ReadAspectMap(Parameters.AspectMapName);
+            }
 
-            prescriptionMaps = new PrescriptionMaps(parameters.PrescriptionMapNames);
-            nameTemplate = parameters.PrescriptionMapNames;
+            //Initialize climate.
+            Climate.Initialize(Parameters.ClimateConfigFile, false, modelCore);
+            FutureClimateBaseYear = Climate.Future_MonthlyData.Keys.Min();
+            ClimateRegionData.Initialize(Parameters);
 
-            if (parameters.BiomassMapNames != null)
-                biomassMaps = new BiomassMaps(parameters.BiomassMapNames);
+            //ShadeLAI = Parameters.MaximumShadeLAI;
+            OtherData.Initialize(Parameters);
+            FireEffects.Initialize(Parameters);
+
+            //  Cohorts must be created before the base class is initialized
+            //  because the base class' reproduction module uses the core's
+            //  SuccessionCohorts property in its Initialization method.
+            Library.LeafBiomassCohorts.Cohorts.Initialize(Timestep, new CohortBiomass());
+
+            // Initialize Reproduction routines:
+            Reproduction.SufficientResources = SufficientLight;
+            Reproduction.Establish = Establish;
+            Reproduction.AddNewCohort = AddNewCohort;
+            Reproduction.MaturePresent = MaturePresent;
+            base.Initialize(modelCore, Parameters.SeedAlgorithm);
+
+            // Delegate mortality routines:
+            Landis.Library.LeafBiomassCohorts.Cohort.PartialDeathEvent += CohortPartialMortality;
+            Landis.Library.LeafBiomassCohorts.Cohort.DeathEvent += CohortTotalMortality;
+
+            InitializeSites(Parameters.InitialCommunities, Parameters.InitialCommunitiesMap, modelCore);
+
+            if (DroughtMortality.UseDrought | DroughtMortality.OutputSoilWaterAvailable | DroughtMortality.OutputTemperature | DroughtMortality.OutputClimateWaterDeficit)
+            {
+                DroughtMortality.Initialize(Parameters);
+            }
+
+            foreach (ActiveSite site in PlugIn.ModelCore.Landscape)
+            {
+                Main.ComputeTotalCohortCN(site, SiteVars.Cohorts[site]);
+                SiteVars.FineFuels[site] = (SiteVars.SurfaceStructural[site].Carbon + SiteVars.SurfaceMetabolic[site].Carbon) * 2.0;
+            }
+
+            Outputs.WritePrimaryLogFile(0);
+            Outputs.WriteShortPrimaryLogFile(0);
 
 
         }
@@ -140,332 +188,629 @@ namespace Landis.Extension.BiomassHarvest
 
         public override void Run()
         {
-            running = true;
 
-            HarvestMgmtLib.SiteVars.Prescription.ActiveSiteValues = null;
-            SiteVars.BiomassRemoved.ActiveSiteValues = 0;
-            Landis.Library.BiomassHarvest.SiteVars.CohortsPartiallyDamaged.ActiveSiteValues = 0;
-            HarvestMgmtLib.SiteVars.CohortsDamaged.ActiveSiteValues = 0;
-            SiteVars.BiomassBySpecies.ActiveSiteValues = null; 
+            if (PlugIn.ModelCore.CurrentTime > 0)
+            {
+                Disturbed.ActiveSiteValues = false;
+                SiteVars.ResetDisturbances();
+            }
 
-            SiteBiomass.EnableRecordingForHarvest();
+            ClimateRegionData.AnnualNDeposition = new Landis.Library.Parameters.Ecoregions.AuxParm<double>(PlugIn.ModelCore.Ecoregions);
+            SpeciesByPlant = new int[ModelCore.Species.Count];
+            SpeciesByResprout = new int[ModelCore.Species.Count];
+            SpeciesBySerotiny = new int[ModelCore.Species.Count];
+            SpeciesBySeed = new int[ModelCore.Species.Count];
 
-            //harvest each management area in the list
-            foreach (ManagementArea mgmtArea in managementAreas) {
+            //base.RunReproductionFirst();
 
-                totalSites          = new int[Prescription.Count];
-                totalDamagedSites   = new int[Prescription.Count];
-                totalSpeciesCohorts = new int[Prescription.Count, modelCore.Species.Count];
-                totalCohortsDamaged = new int[Prescription.Count];
-                totalCohortsKilled  = new int[Prescription.Count];
-                // 2015-09-14 LCB Track prescriptions as they are reported in summary log so we don't duplicate
-                prescriptionReported = new bool[Prescription.Count];
-                totalSpeciesBiomass = new double[Prescription.Count, modelCore.Species.Count];
-                totalBiomassRemoved = new double[Prescription.Count];
+            base.Run();
 
-                mgmtArea.HarvestStands();
-                //and record each stand that's been harvested in a non-repeat step
+            if (Timestep > 0)
+                ClimateRegionData.SetAllEcoregions_FutureAnnualClimate(ModelCore.CurrentTime);
 
-                foreach (Stand stand in mgmtArea) {
-                    //ModelCore.UI.WriteLine("   List of stands {0} ...", stand.MapCode);
-                    if (stand.Harvested && !stand.RepeatHarvested)
-                        WriteLogEntry(mgmtArea, stand);
+            if (ModelCore.CurrentTime % Timestep == 0)
+            {
+                // Write monthly log file:
+                // Output must reflect the order of operation:
+                int[] months = new int[12] { 6, 7, 8, 9, 10, 11, 0, 1, 2, 3, 4, 5 };
 
-                    // Do not double up on recording repeat harvested stands. This is now done from the harvest code
-                    else if (stand.RepeatHarvested)
-                        stand.SetRepeatHarvested();
+                if (OtherData.CalibrateMode)
+                    months = new int[12] { 6, 7, 8, 9, 10, 11, 0, 1, 2, 3, 4, 5 };
+
+                for (int i = 0; i < 12; i++)
+                {
+                    int month = months[i];
+                    Outputs.WriteMonthlyLogFile(month);
+                }
+                Outputs.WritePrimaryLogFile(PlugIn.ModelCore.CurrentTime);
+                Outputs.WriteShortPrimaryLogFile(PlugIn.ModelCore.CurrentTime);
+                Outputs.WriteMaps();
+                Outputs.WriteReproductionLog(PlugIn.ModelCore.CurrentTime);
+                Establishment.LogEstablishment();
+                if (PlugIn.InputCommunityMapNames != null && ModelCore.CurrentTime % PlugIn.InputCommunityMapFrequency == 0)
+                    Outputs.WriteCommunityMaps();
+                if(DroughtMortality.UseDrought)   Outputs.WriteDroughtSpeciesFile(PlugIn.ModelCore.CurrentTime);
+            }
+
+        }
+
+
+        //---------------------------------------------------------------------
+        // Although this function is no longer referenced, it is required through inheritance from the succession library
+
+        public override byte ComputeShade(ActiveSite site)
+        {
+
+            return (byte) SiteVars.LAI[site]; // finalShade;
+        }
+
+
+        //---------------------------------------------------------------------
+
+        protected override void InitializeSite(ActiveSite site)
+        {
+
+            InitialBiomass initialBiomass = InitialBiomass.Compute(site, initialCommunity);
+            SiteVars.MineralN[site] = Parameters.InitialMineralN;
+        }
+
+
+        //---------------------------------------------------------------------
+        // This method does not trigger reproduction
+        public void CohortPartialMortality(object sender, Landis.Library.BiomassCohorts.PartialDeathEventArgs eventArgs)
+        {
+            if(OtherData.CalibrateMode) PlugIn.ModelCore.UI.WriteLine("Cohort Partial Mortality:  {0}", eventArgs.Site);
+
+            ExtensionType disturbanceType = eventArgs.DisturbanceType;
+            ActiveSite site = eventArgs.Site;
+
+            ICohort cohort = (Landis.Library.LeafBiomassCohorts.ICohort)eventArgs.Cohort;
+
+            float fractionPartialMortality = (float)eventArgs.Reduction;
+            float foliarInput = cohort.LeafBiomass * fractionPartialMortality;
+            float woodInput = cohort.WoodBiomass * fractionPartialMortality;
+
+            if (disturbanceType.IsMemberOf("disturbance:harvest"))
+            {
+                SiteVars.HarvestPrescriptionName = PlugIn.ModelCore.GetSiteVar<string>("Harvest.PrescriptionName");
+                if (ModelCore.CurrentTime > SiteVars.HarvestDisturbedYear[site]) // this is the first cohort killed/damaged
+                {
+                    //PlugIn.ModelCore.UI.WriteLine("   Begin harvest layer reductions...");
+                    HarvestEffects.ReduceLayers(SiteVars.HarvestPrescriptionName[site], site);
+                    SiteVars.HarvestDisturbedYear[site] = ModelCore.CurrentTime;
+                }
+                woodInput -= woodInput * (float)HarvestEffects.GetCohortWoodRemoval(site);
+                foliarInput -= foliarInput * (float)HarvestEffects.GetCohortLeafRemoval(site);
+            }
+            if (disturbanceType.IsMemberOf("disturbance:fire"))
+            {
+
+                SiteVars.FireSeverity = PlugIn.ModelCore.GetSiteVar<byte>("Fire.Severity");
+
+                if (ModelCore.CurrentTime > SiteVars.FireDisturbedYear[site]) // this is the first cohort killed/damaged
+                {
+                    SiteVars.SmolderConsumption[site] = 0.0;
+                    SiteVars.FlamingConsumption[site] = 0.0;
+                    if (SiteVars.FireSeverity != null && SiteVars.FireSeverity[site] > 0)
+                        FireEffects.ReduceLayers(SiteVars.FireSeverity[site], site);
+
+                    SiteVars.FireDisturbedYear[site] = ModelCore.CurrentTime;
+
                 }
 
-                // Prevent establishment:
-                foreach (Stand stand in mgmtArea) {
+                double live_woodFireConsumption = woodInput * (float)FireEffects.ReductionsTable[(int)SiteVars.FireSeverity[site]].CohortWoodReduction;
+                double live_foliarFireConsumption = foliarInput * (float)FireEffects.ReductionsTable[(int)SiteVars.FireSeverity[site]].CohortLeafReduction;
 
-                    if (stand.Harvested && stand.LastPrescription.PreventEstablishment) {
+                SiteVars.SmolderConsumption[site] += live_woodFireConsumption;
+                SiteVars.FlamingConsumption[site] += live_foliarFireConsumption;
+                SiteVars.SourceSink[site].Carbon += live_woodFireConsumption * 0.47;
+                SiteVars.SourceSink[site].Carbon += live_foliarFireConsumption * 0.47;
+                woodInput -= (float)live_woodFireConsumption;
+                foliarInput -= (float)live_foliarFireConsumption;
 
-                        List<ActiveSite> sitesToDelete = new List<ActiveSite>();
+            }
+            if (disturbanceType.IsMemberOf("disturbance:browse"))
+            {
+                //SF Initial effort to account for browsed biomass nutrient cycling
+                //all browser waste treated as leaves with high N content. This overestimates moose waste if 
+                //there is a lot of cohort mortality versus browse eaten. 
 
-                        foreach (ActiveSite site in stand)
-                        {
-                            if (Landis.Library.BiomassHarvest.SiteVars.CohortsPartiallyDamaged[site] > 0 || HarvestMgmtLib.SiteVars.CohortsDamaged[site] > 0)
-                            {
-                                Landis.Library.Succession.Reproduction.PreventEstablishment(site);
-                                sitesToDelete.Add(site);
-                            }
+                foliarInput += woodInput; 
+                woodInput = 0;
 
-                        }
+                double inputDecayValue = 1.0;   // Decay value is calculated for surface/soil layers (leaf/fine root), 
+                                                // therefore, this is just a dummy value.
 
-                        foreach (ActiveSite site in sitesToDelete) {
-                            stand.DelistActiveSite(site);
-                        }
+                if (foliarInput > 0)
+                {
+                    SiteVars.LitterfallC[site] += foliarInput * 0.47;
+                    foliarInput = foliarInput * (float) 0.1;                     //most carbon is respired
+
+
+                    //PlugIn.ModelCore.UI.WriteLine("waste input is {0}, CN ratio of waste is {1}", foliarInput, 50);
+
+                    //Nitrogen content of feces is approximately 1.6% for deer(Asada and Ochiai 1999),
+                    //between 1.45% and 2.26% for deer (Howery and Pfister, 1990),
+                    //2.5%  for deer (Euan et al. 2020),
+                    //1.33% in winter, 2.44% for moose in summer (Persson et al. 2000),
+                    //2.4% for moose (Kuijper et al. 2016)
+                    //Feces N = 5.7 kg per moose per year (Persson et al. 2000)
+
+                    //Amount of nitrogen in urine is 0.5% in summer (Persson et al. 2000)
+                    //3675 L urine per moose per year (Persson et al. 2000)
+                    //Urine is 0.5% N = 18.375 kg N per year per moose (assuming summer and winter N content is the same)
+
+                    //Total N for moose waste = 24 kg per moose per year
+                    //Each moose eats 2738 kg biomass per year
+                    //Foliar inputs are 2738 * 0.47 * 0.1 kg C  = 128.67 kg C per moose
+                    //CN ratio = 128/24 = 5.33
+
+                    LitterLayer.PartitionResidue(
+                                foliarInput,
+                                inputDecayValue,
+                                5.33, //CN ratio for browse waste -- metabolic
+                                1, //"lignin" content of waste
+                                5.33, //CN ratio for browse waste -- structural
+                                LayerName.Leaf,
+                                LayerType.Surface,
+                                site);
+                    //PlugIn.ModelCore.UI.WriteLine("EVENT: Cohort Partial Mortality: species={0}, age={1}, disturbance={2}.", cohort.Species.Name, cohort.Age, disturbanceType);
+                    //PlugIn.ModelCore.UI.WriteLine("       Cohort Reductions:  Foliar={0:0.00}.  Wood={1:0.00}.", HarvestEffects.GetCohortLeafRemoval(site), HarvestEffects.GetCohortLeafRemoval(site));
+                    //PlugIn.ModelCore.UI.WriteLine("       InputB/TotalB:  Foliar={0:0.00}/{1:0.00}, Wood={2:0.0}/{3:0.0}.", foliarInput, cohort.LeafBiomass, woodInput, cohort.WoodBiomass);
+
+                    Disturbed[site] = false; 
+
+                    return;
+                }
+            }
+            
+            if (SpeciesData.Grass[cohort.Species])
+            {
+                ForestFloor.AddFoliageLitter(woodInput + foliarInput, cohort.Species, site);  //  Wood biomass of grass species is transfered to non wood litter. (W.Hotta 2021.12.16)
+
+                Roots.AddFineRootLitter(Roots.CalculateFineRoot(cohort, (cohort.WoodBiomass + cohort.LeafBiomass) * fractionPartialMortality), cohort, cohort.Species, site);
+            }
+            else
+            {
+                ForestFloor.AddWoodLitter(woodInput, cohort.Species, site);
+                ForestFloor.AddFoliageLitter(foliarInput, cohort.Species, site);
+
+                Roots.AddCoarseRootLitter(Roots.CalculateCoarseRoot(cohort, cohort.WoodBiomass * fractionPartialMortality), cohort, cohort.Species, site);
+                Roots.AddFineRootLitter(Roots.CalculateFineRoot(cohort, cohort.LeafBiomass * fractionPartialMortality), cohort, cohort.Species, site);
+                
+            }
+            
+            //PlugIn.ModelCore.UI.WriteLine("EVENT: Cohort Partial Mortality: species={0}, age={1}, disturbance={2}.", cohort.Species.Name, cohort.Age, disturbanceType);
+            //PlugIn.ModelCore.UI.WriteLine("       Cohort Reductions:  Foliar={0:0.00}.  Wood={1:0.00}.", HarvestEffects.GetCohortLeafRemoval(site), HarvestEffects.GetCohortLeafRemoval(site));
+            //PlugIn.ModelCore.UI.WriteLine("       InputB/TotalB:  Foliar={0:0.00}/{1:0.00}, Wood={2:0.0}/{3:0.0}.", foliarInput, cohort.LeafBiomass, woodInput, cohort.WoodBiomass);
+            Disturbed[site] = true;
+
+            return;
+        }
+        //---------------------------------------------------------------------
+        // Total mortality, including from disturbance or senescence.
+
+        public void CohortTotalMortality(object sender, Landis.Library.BiomassCohorts.DeathEventArgs eventArgs)
+        {
+
+            //PlugIn.ModelCore.UI.WriteLine("Cohort Total Mortality: {0}", eventArgs.Site);
+
+            ExtensionType disturbanceType = eventArgs.DisturbanceType;
+
+            ActiveSite site = eventArgs.Site;
+
+            ICohort cohort = (Landis.Library.LeafBiomassCohorts.ICohort)eventArgs.Cohort;
+            double foliarInput = (double)cohort.LeafBiomass;
+            double woodInput = (double)cohort.WoodBiomass;
+
+            if (disturbanceType != null)
+            {
+                //PlugIn.ModelCore.UI.WriteLine("DISTURBANCE EVENT: Cohort Died: species={0}, age={1}, disturbance={2}.", cohort.Species.Name, cohort.Age, eventArgs.DisturbanceType);
+
+                if (disturbanceType.IsMemberOf("disturbance:fire"))
+                {
+                    SiteVars.FireSeverity = PlugIn.ModelCore.GetSiteVar<byte>("Fire.Severity");
+                    Landis.Library.Succession.Reproduction.CheckForPostFireRegen(eventArgs.Cohort, site);
+
+                    if (ModelCore.CurrentTime > SiteVars.FireDisturbedYear[site])  // the first cohort killed/damaged
+                    {
+                        SiteVars.SmolderConsumption[site] = 0.0;
+                        SiteVars.FlamingConsumption[site] = 0.0;
+                        if (SiteVars.FireSeverity != null && SiteVars.FireSeverity[site] > 0)
+                            FireEffects.ReduceLayers(SiteVars.FireSeverity[site], site);
+
+                        SiteVars.FireDisturbedYear[site] = ModelCore.CurrentTime;
+
                     }
 
-                }
+                    double woodFireConsumption = woodInput * (float)FireEffects.ReductionsTable[(int)SiteVars.FireSeverity[site]].CohortWoodReduction;
+                    double foliarFireConsumption = foliarInput * (float)FireEffects.ReductionsTable[(int)SiteVars.FireSeverity[site]].CohortLeafReduction;
 
-                foreach (AppliedPrescription aprescription in mgmtArea.Prescriptions)
+                    SiteVars.SmolderConsumption[site] += woodFireConsumption;
+                    SiteVars.FlamingConsumption[site] += foliarFireConsumption;
+                    SiteVars.SourceSink[site].Carbon += woodFireConsumption * 0.47;
+                    SiteVars.SourceSink[site].Carbon += foliarFireConsumption * 0.47;
+                    woodInput -= woodFireConsumption;
+                    foliarInput -= foliarFireConsumption;
+
+                }
+                else
                 {
-                    if (modelCore.CurrentTime <= aprescription.EndTime)
-                        WriteSummaryLogEntry(mgmtArea, aprescription);
+                    if (disturbanceType.IsMemberOf("disturbance:harvest"))
+                    {
+                        SiteVars.HarvestPrescriptionName = PlugIn.ModelCore.GetSiteVar<string>("Harvest.PrescriptionName");
+                        if (ModelCore.CurrentTime > SiteVars.HarvestDisturbedYear[site])  // the first cohort killed/damaged
+                        {
+                            HarvestEffects.ReduceLayers(SiteVars.HarvestPrescriptionName[site], site);
+                        }
+                        double woodLoss = woodInput * (float)HarvestEffects.GetCohortWoodRemoval(site);
+                        double foliarLoss = foliarInput * (float)HarvestEffects.GetCohortLeafRemoval(site);
+                        SiteVars.SourceSink[site].Carbon += woodLoss * 0.47;
+                        SiteVars.SourceSink[site].Carbon += foliarLoss * 0.47;
+                        woodInput -= woodLoss;
+                        foliarInput -= foliarLoss;
+                        SiteVars.HarvestDisturbedYear[site] = ModelCore.CurrentTime;
+                    }
+
+                    // If not fire, check for resprouting:
+                    Landis.Library.Succession.Reproduction.CheckForResprouting(eventArgs.Cohort, site);
                 }
             }
 
-            WritePrescriptionMap(modelCore.CurrentTime);
-            if (biomassMaps != null)
-                biomassMaps.WriteMap(modelCore.CurrentTime);
 
-            running = false;
-            
-            SiteBiomass.DisableRecordingForHarvest();
-        }
-
-        //---------------------------------------------------------------------
-
-        // Event handler when a site has been harvested.
-        public static void SiteHarvested(object                  sender,
-                                         SiteHarvestedEvent.Args eventArgs)
-        {
-            ActiveSite site = eventArgs.Site;
-            IDictionary<ISpecies, int> biomassBySpecies = new Dictionary<ISpecies, int>();
-            foreach (ISpecies species in ModelCore.Species)
+            if (SpeciesData.Grass[cohort.Species])
             {
-                int speciesBiomassHarvested = SiteBiomass.Harvested[species];
-                SiteVars.BiomassRemoved[site] += speciesBiomassHarvested;
-                biomassBySpecies.Add(species, speciesBiomassHarvested);
+                //PlugIn.ModelCore.UI.WriteLine("Cohort Died: species={0}, age={1}, wood={2:0.00}, foliage={3:0.00}.", cohort.Species.Name, cohort.Age, wood, foliar);
+                ForestFloor.AddFoliageLitter(woodInput + foliarInput, cohort.Species, eventArgs.Site);  //  Wood biomass of grass species is transfered to non wood litter. (W.Hotta 2021.12.16)
+
+                // Assume that ALL dead root biomass stays on site.
+                Roots.AddFineRootLitter(Roots.CalculateFineRoot(cohort, cohort.WoodBiomass + cohort.LeafBiomass), cohort, cohort.Species, eventArgs.Site);
             }
-            SiteVars.BiomassBySpecies[site] = biomassBySpecies;
-            SiteBiomass.ResetHarvestTotals();
-        }
+            else
+            {
+                //PlugIn.ModelCore.UI.WriteLine("Cohort Died: species={0}, age={1}, wood={2:0.00}, foliage={3:0.00}.", cohort.Species.Name, cohort.Age, wood, foliar);
+                ForestFloor.AddWoodLitter(woodInput, cohort.Species, eventArgs.Site);
+                ForestFloor.AddFoliageLitter(foliarInput, cohort.Species, eventArgs.Site);
 
-        // Event handler when a stand has been harvested in a repeat step
-        public static void RepeatStandHarvested(object sender,
-                                         RepeatHarvestStandHarvestedEvent.Args eventArgs)
-        {
-            WriteLogEntry(eventArgs.MgmtArea, eventArgs.Stand, eventArgs.RepeatNumber);
-        }
+                // Assume that ALL dead root biomass stays on site.
+                Roots.AddCoarseRootLitter(Roots.CalculateCoarseRoot(cohort, cohort.WoodBiomass), cohort, cohort.Species, eventArgs.Site);
+                Roots.AddFineRootLitter(Roots.CalculateFineRoot(cohort, cohort.LeafBiomass), cohort, cohort.Species, eventArgs.Site);
+            }
+            
 
-        // Event handler when a prescription has finished a repeat event
-        public static void RepeatPrescriptionHarvested(object sender,
-                                         RepeatHarvestPrescriptionFinishedEvent.Args eventArgs)
-        {
-            WriteSummaryLogEntry(eventArgs.MgmtArea, eventArgs.Prescription, eventArgs.RepeatNumber,
-                eventArgs.LastHarvest);
+            if (disturbanceType != null)
+                Disturbed[site] = true;
+
+            return;
         }
 
         //---------------------------------------------------------------------
+        //Grows the cohorts for future climate
+        protected override void AgeCohorts(ActiveSite site,
+                                           ushort years,
+                                           int? successionTimestep)
+        {
+            Main.Run(site, years, successionTimestep.HasValue);
 
-        // Event handler when a cohort is killed by an age-only disturbance.
-        public static void CohortKilledByAgeOnlyDisturbance(object sender, DeathEventArgs eventArgs)
+        }
+        //---------------------------------------------------------------------
+        /// <summary>
+        /// Determines if there is sufficient light at a site for a species to
+        /// germinate/resprout.
+        /// This is a Delegate method to base succession.
+        /// </summary>
+        /// 
+        // W.Hotta and Chihiro modified
+        // 
+        // Description:
+        //     - Modify light probability based on the amount of nursery log on the site
+        //
+        //
+        
+        public bool SufficientLight(ISpecies species, ActiveSite site)
         {
 
-        //    // If this plug-in is not running, then some base disturbance
-        //    // plug-in killed the cohort.
-            if (!running)
-                return;
+            //PlugIn.ModelCore.UI.WriteLine("  Calculating Sufficient Light from Succession.");
+            //byte siteShade = PlugIn.ModelCore.GetSiteVar<byte>("Shade")[site];
+            //int bestShadeClass = 0; // the best shade class for the species; Chihiro
+            //bool found = false;
+            bool isSufficientlight = false;
+            double lightProbability = 0.0;
 
-        //    // If this plug-in is running, then the age-only disturbance must
-        //    // be a cohort-selector from Base Harvest.
+            string regenType = "failed"; // Identify where the cohort established; Chihiro
+            //SF regenType is only used in CalibrateMode
 
-            //ModelCore.UI.WriteLine("Cohort Biomass removed={0:0.0}; Total Killed={1:0.0}.", reduction, SiteVars.BiomassRemoved[eventArgs.Site]);
-            //Landis.Library.BiomassHarvest.SiteVars.CohortsPartiallyDamaged[eventArgs.Site]++;
+            var random = new Troschuetz.Random.TRandom();
+            double a = SpeciesData.LightLAIShape[species];
+            double b = SpeciesData.LightLAIScale[species];
+            double c = SpeciesData.LightLAILocation[species];
+            double adjust = SpeciesData.LightLAIAdjust[species];
+            double lai = SiteVars.LAI[site];
+
+            lightProbability = adjust * (((a / b) * Math.Pow((lai / b), (a - 1)) * Math.Exp(-Math.Pow((lai / b), a))) + c); //3-parameter Weibull PDF equation
+            lightProbability = Math.Min(lightProbability, 1.0);
+            //if(OtherData.CalibrateMode) PlugIn.ModelCore.UI.WriteLine("Estimated Weibull light probability for species {0} = {1:0.000}, at LAI = {2:0.00}", species.Name, lightProbability, SiteVars.LAI[site]);
+            
+            //double randomLAI = PlugIn.ModelCore.NormalDistribution.NextDouble();
+            if (modelCore.GenerateUniform() < lightProbability)
+                isSufficientlight = true;
+
+            // ------------------------------------------------------------------------
+            // Modify light probability based on the amount of nursery log on the site
+            // W.Hotta 2020.01.22
+            //
+            // Compute the availability of nursery log on the site
+            //   Option1: function type is linear
+            //   Option2: function type is power
+
+            if (!SpeciesData.NurseLog_depend[species])
+                return isSufficientlight;
+
+            double nurseryLogAvailabilityModifier = 2.0; // tuning parameter (only even)
+            double nurseryLogAvailability = 1 - Math.Pow(ComputeNurseryLogAreaRatio(species, site) - 1, nurseryLogAvailabilityModifier);
+            if (OtherData.CalibrateMode)
+            {
+                PlugIn.ModelCore.UI.WriteLine("original_lightProbability:{0},{1},{2}", PlugIn.ModelCore.CurrentTime, species.Name, lightProbability);
+                //PlugIn.ModelCore.UI.WriteLine("siteShade:{0}", siteShade);
+                PlugIn.ModelCore.UI.WriteLine("siteLAI:{0}", SiteVars.LAI[site]);
+            }
+
+            // Case 1. CWD-dependent species (species which can only be established on nursery log)
+            if (SpeciesData.NurseLog_depend[species]) // W.Hotta (2021.08.01)
+            {
+                lightProbability *= nurseryLogAvailability;
+                isSufficientlight = modelCore.GenerateUniform() < lightProbability;
+                if (isSufficientlight) regenType = "nurse_log";
+            }
+            // Case 2. CWD-independent species (species which can be established on both forest floor & nursery log)
+            else
+            {
+                // 1. Can the cohort establish on forest floor? (lightProbability is considering both Tree and Grass species)
+                if (modelCore.GenerateUniform() < lightProbability)
+                {
+                    isSufficientlight = true;
+                    regenType = "surface";
+                }
+                //else
+                //{
+                //    // 2. If (1) the site shade is darker than the best shade class for the species and 
+                //    //       (2) the light availability meets the species requirement,
+                //    //if (siteShade > bestShadeClass && modelCore.GenerateUniform() < lightProbability)
+                //    //{
+                //        // 3. check if threre are sufficient amounts of downed logs?
+                //        isSufficientlight = modelCore.GenerateUniform() < nurseryLogAvailability;
+                //        if (isSufficientlight) regenType = "nlog";
+                //    //}
+                //}
+                if (OtherData.CalibrateMode)
+                {
+                    PlugIn.ModelCore.UI.WriteLine("nurseryLogPenalty:{0},{1},{2}", PlugIn.ModelCore.CurrentTime, species.Name, nurseryLogAvailability);
+                    PlugIn.ModelCore.UI.WriteLine("modified_lightProbability:{0},{1},{2}", PlugIn.ModelCore.CurrentTime, species.Name, lightProbability);
+                    PlugIn.ModelCore.UI.WriteLine("regeneration_type:{0},{1},{2}", PlugIn.ModelCore.CurrentTime, species.Name, regenType);
+                }
+            }
+
+            return isSufficientlight;
+        }
+
+        //---------------------------------------------------------------------
+        /// <summary>
+        /// Compute the most suitable shade class for the species
+        /// This function identifies the peak of the light establishment table.
+        /// </summary>
+        // Chihiro 2020.01.22
+        //
+        //private static int ComputeBestShadeClass(ISufficientLight lights)
+        //{
+        //    int bestShadeClass = 0;
+        //    double maxProbabilityLight = 0.0;
+        //    if (lights.ProbabilityLight0 > maxProbabilityLight) bestShadeClass = 0;
+        //    if (lights.ProbabilityLight1 > maxProbabilityLight) bestShadeClass = 1;
+        //    if (lights.ProbabilityLight2 > maxProbabilityLight) bestShadeClass = 2;
+        //    if (lights.ProbabilityLight3 > maxProbabilityLight) bestShadeClass = 3;
+        //    if (lights.ProbabilityLight4 > maxProbabilityLight) bestShadeClass = 4;
+        //    if (lights.ProbabilityLight5 > maxProbabilityLight) bestShadeClass = 5;
+        //    return bestShadeClass;
+
+        //}
+
+
+        //---------------------------------------------------------------------
+        /// <summary>
+        /// Compute the ratio of projected area (= occupancy area) of nursery logs to the grid area.
+        /// </summary>
+        // W.Hotta & Chihiro;
+        //
+        // Description: 
+        //     - Every SiteVars.CurrentDeadWoodC[site] is downed logs.
+        //     - Only the downed logs (SiteVars.CurrentDeadWoodC[site]) which decay class is between 3 to 5 
+        //       are suitable for establishment and treated as nursery logs.
+        //     - The carbon stocks of the nursery logs are converted to volume 
+        //       using a wood density of each decay class.
+        //     - Then, the volume is converted to the projected area (occupation area) 
+        //       using the mean height of downed logs derived from field data.
+        //         - The shape of downed logs were assumed to be an elliptical cylinder
+        //
+        //
+        
+        private static double ComputeNurseryLogAreaRatio(ISpecies species, ActiveSite site)
+        {
+            // Hight of downed logs
+            double hight = 28.64; // Units: cm
+
+            // Wood density (g cm^-3) of dead wood for each decay class.
+            // Decay class 3-5 is suitable for establishment.
+            // Reference: Unidentified spp category in Table 3 of Ugawa et al. (2012)
+            //            https://www.ffpri.affrc.go.jp/pubs/bulletin/425/documents/425-2.pdf
+            double densityDecayClass0 = 0.421;
+            double densityDecayClass3 = 0.255;
+            double densityDecayClass4 = 0.178;
+            double densityDecayClass5 = 0.112;
+
+            // Compute the amount of nursery log carbon (gC m^-2)
+            double[] nurseryLogC = ComputeNurseryLogC(site, densityDecayClass0, densityDecayClass3, densityDecayClass4, densityDecayClass5);
+
+            // Compute the area ratio in the site of the nursery log occupies.
+            // The shape of downed logs were assumed to be an elliptical cylinder
+            // Variables:
+            //   decayClassXAreaRatio (-)
+            //   nurseryLogC[X] (gC m^-2)
+            //   height (cm)
+            //   densityDecayClass[X] (gC cm^-3)
+            double decayClass3AreaRatio = 4 * 2 * nurseryLogC[0] / (Math.PI * hight * densityDecayClass3) * Math.Pow(10, -4); // Decay class 3
+            double decayClass4AreaRatio = 4 * 2 * nurseryLogC[1] / (Math.PI * hight * densityDecayClass4) * Math.Pow(10, -4); // Decay class 4
+            double decayClass5AreaRatio = 4 * 2 * nurseryLogC[2] / (Math.PI * hight * densityDecayClass5) * Math.Pow(10, -4); // Decay class 5
+            if (OtherData.CalibrateMode && species.Index == 0)
+            {
+                PlugIn.ModelCore.UI.WriteLine("nurseryLogC:{0},{1},{2},{3}", PlugIn.ModelCore.CurrentTime, nurseryLogC[0], nurseryLogC[1], nurseryLogC[2]);
+                PlugIn.ModelCore.UI.WriteLine("decayClassAreaRatios:{0},{1},{2},{3}", PlugIn.ModelCore.CurrentTime, decayClass3AreaRatio, decayClass4AreaRatio, decayClass5AreaRatio);
+            }
+            return Math.Min(1.0, decayClass3AreaRatio + decayClass4AreaRatio + decayClass5AreaRatio);
+        }
+
+
+        //---------------------------------------------------------------------
+        /// <summary>
+        /// Compute the amount of nursery log carbon based on its decay ratio
+        /// </summary>
+        // W.Hotta & Chihiro; 
+        //
+        // Description: 
+        //     - In the process of decomposition of downed logs, 
+        //       the volume remains the same, only the density changes.
+        //
+        
+        private static double[] ComputeNurseryLogC(ActiveSite site, double densityDecayClass0, double densityDecayClass3, double densityDecayClass4, double densityDecayClass5)
+        {
+            // Define thresholds to identify decay class
+            double retentionRatioThreshold3 = densityDecayClass3 / densityDecayClass0;
+            double retentionRatioThreshold4 = densityDecayClass4 / densityDecayClass0;
+            double retentionRatioThreshold5 = densityDecayClass5 / densityDecayClass0;
+
+            // Initialize nursery log carbon for each decay class
+            double decayClass3 = 0.0;
+            double decayClass4 = 0.0;
+            double decayClass5 = 0.0;
+
+            // Update the amount of carbon for each decayClass
+            for (int i = 0; i < SiteVars.CurrentDeadWoodC[site].Length; i++)
+            {
+                // Compute the ratio of the current dead wood C to the origindal dead wood C
+                double retentionRatio = SiteVars.CurrentDeadWoodC[site][i] / SiteVars.OriginalDeadWoodC[site][i];
+                // PlugIn.ModelCore.UI.WriteLine("decayRatio:{0},{1}", PlugIn.ModelCore.CurrentTime, decayRatio);
+
+                // Identify the decay class of the current dead wood carbon & update the amount of C of each decay class (i.e. the amount of carbon just after the focused dead wood was generated.)
+                if (retentionRatio >= retentionRatioThreshold4 & retentionRatio < retentionRatioThreshold3)
+                {
+                    decayClass3 += SiteVars.CurrentDeadWoodC[site][i];
+                }
+                else if (retentionRatio >= retentionRatioThreshold5 & retentionRatio < retentionRatioThreshold4)
+                {
+                    decayClass4 += SiteVars.CurrentDeadWoodC[site][i];
+                }
+                else if (retentionRatio < retentionRatioThreshold5)
+                {
+                    decayClass5 += SiteVars.CurrentDeadWoodC[site][i];
+                }
+            }
+            // PlugIn.ModelCore.UI.WriteLine("decayClasses:{0},{1},{2},{3}", PlugIn.ModelCore.CurrentTime, decayClass3, decayClass4, decayClass5);
+            return new double[3] { decayClass3, decayClass4, decayClass5 };
+        }
+
+
+        //---------------------------------------------------------------------
+        /// <summary>
+        /// Add a new cohort to a site following reproduction or planting.  Does not include initial communities.
+        /// This is a Delegate method to base succession.
+        /// </summary>
+
+        public void AddNewCohort(ISpecies species, ActiveSite site, string reproductionType)
+        {
+            float[] initialBiomass = CohortBiomass.InitialBiomass(species, SiteVars.Cohorts[site], site);
+            SiteVars.Cohorts[site].AddNewCohort(species, 1, initialBiomass[0], initialBiomass[1]);
+
+            if (reproductionType == "plant")
+                SpeciesByPlant[species.Index]++;
+            else if (reproductionType == "serotiny")
+                SpeciesBySerotiny[species.Index]++;
+            else if (reproductionType == "resprout")
+                SpeciesByResprout[species.Index]++;
+            else if (reproductionType == "seed")
+                SpeciesBySeed[species.Index]++;
+
+        }
+        //---------------------------------------------------------------------
+        /// <summary>
+        /// Determines if a species can establish on a site.
+        /// This is a Delegate method to base succession.
+        /// </summary>
+        public bool Establish(ISpecies species, ActiveSite site)
+        {
+            double establishProbability = Establishment.Calculate(species, site);
+
+            return modelCore.GenerateUniform() < establishProbability;
         }
 
         //---------------------------------------------------------------------
 
         /// <summary>
-        /// Writes an output map of prescriptions that harvested each active site.
+        /// Determines if a species can establish on a site.
+        /// This is a Delegate method to base succession.
         /// </summary>
-        private void WritePrescriptionMap(int timestep)
+        public bool PlantingEstablish(ISpecies species, ActiveSite site)
         {
-            string path = MapNames.ReplaceTemplateVars(nameTemplate, timestep);
-            ModelCore.UI.WriteLine("   Writing prescription map to {0} ...", path);
-            using (IOutputRaster<ShortPixel> outputRaster = modelCore.CreateRaster<ShortPixel>(path, modelCore.Landscape.Dimensions))
-            {
-                ShortPixel pixel = outputRaster.BufferPixel;
-                foreach (Site site in modelCore.Landscape.AllSites)
-                {
-                    if (site.IsActive) {
-                        Prescription prescription = HarvestMgmtLib.SiteVars.Prescription[site];
-                        if (prescription == null)
-                            pixel.MapCode.Value = 1;
-                        else
-                            pixel.MapCode.Value = (short) (prescription.Number + 1);
-                    }
-                    else {
-                        //  Inactive site
-                        pixel.MapCode.Value = 0;
-                    }
-                    outputRaster.WriteBufferPixel();
-                }
-            }
+            IEcoregion ecoregion = modelCore.Ecoregion[site];
+            double establishProbability = Establishment.Calculate(species, site);
+
+            return establishProbability > 0.0;
         }
 
         //---------------------------------------------------------------------
 
-        public static void WriteLogEntry(ManagementArea mgmtArea, Stand stand, uint repeatNumber = 0)
+        /// <summary>
+        /// Determines if there is a mature cohort at a site.
+        /// This is a Delegate method to base succession.
+        /// </summary>
+        public bool MaturePresent(ISpecies species, ActiveSite site)
         {
-            int damagedSites = 0;
-            int cohortsDamaged = 0;
-            int cohortsKilled = 0;
-            int standPrescriptionNumber = 0;
-            double biomassRemoved = 0.0;
-            double biomassRemovedPerHa = 0.0;
-            IDictionary<ISpecies, double> totalBiomassBySpecies = new Dictionary<ISpecies, double>();
-
-            //ModelCore.UI.WriteLine("BiomassHarvest:  PlugIn.cs: WriteLogEntry: mgmtArea {0}, Stand {1} ", mgmtArea.Prescriptions.Count, stand.MapCode);
-
-            foreach (ActiveSite site in stand) {
-                //set the prescription name for this site
-                if (HarvestMgmtLib.SiteVars.Prescription[site] != null)
-                {
-                    standPrescriptionNumber = HarvestMgmtLib.SiteVars.Prescription[site].Number;
-                    HarvestMgmtLib.SiteVars.PrescriptionName[site] = HarvestMgmtLib.SiteVars.Prescription[site].Name;
-                    HarvestMgmtLib.SiteVars.TimeOfLastEvent[site] = modelCore.CurrentTime;
-                }
-
-                cohortsDamaged += Landis.Library.BiomassHarvest.SiteVars.CohortsPartiallyDamaged[site];
-                cohortsKilled += (HarvestMgmtLib.SiteVars.CohortsDamaged[site] - Landis.Library.BiomassHarvest.SiteVars.CohortsPartiallyDamaged[site]);
-
-
-                if (Landis.Library.BiomassHarvest.SiteVars.CohortsPartiallyDamaged[site] > 0 || HarvestMgmtLib.SiteVars.CohortsDamaged[site] > 0)
-                {
-                    damagedSites++;
-
-                    //Conversion from [g m-2] to [Mg ha-1] to [Mg]
-                    biomassRemoved += SiteVars.BiomassRemoved[site] / 100.0 * modelCore.CellArea;
-                    IDictionary<ISpecies, int> siteBiomassBySpecies = SiteVars.BiomassBySpecies[site];
-                    if (siteBiomassBySpecies != null)
-                    {
-                        // Sum up total biomass for each species
-                        foreach (ISpecies species in modelCore.Species)
-                        {
-                            int addValue = 0;
-                            siteBiomassBySpecies.TryGetValue(species, out addValue);
-                            double oldValue;
-                            if (totalBiomassBySpecies.TryGetValue(species, out oldValue))
-                            {
-                                totalBiomassBySpecies[species] += addValue / 100.0 * modelCore.CellArea;
-                            }
-                            else
-                            {
-                                totalBiomassBySpecies.Add(species, addValue / 100.0 * modelCore.CellArea);
-                            }
-                        }
-                    }
-                }
-            }
-
-            totalSites[standPrescriptionNumber] += stand.SiteCount;
-            totalDamagedSites[standPrescriptionNumber] += damagedSites;
-            totalCohortsDamaged[standPrescriptionNumber] += cohortsDamaged;
-            totalCohortsKilled[standPrescriptionNumber] += cohortsKilled;
-            totalBiomassRemoved[standPrescriptionNumber] += biomassRemoved;
-
-            double[] species_cohorts = new double[modelCore.Species.Count];
-            double[] species_biomass = new double[modelCore.Species.Count];
-
-            double biomass_value;
-            foreach (ISpecies species in modelCore.Species) {
-                int cohortCount = stand.DamageTable[species];
-                species_cohorts[species.Index] = cohortCount;
-                totalSpeciesCohorts[standPrescriptionNumber, species.Index] += cohortCount;
-                totalBiomassBySpecies.TryGetValue(species, out biomass_value);
-                species_biomass[species.Index] = biomass_value;
-                totalSpeciesBiomass[standPrescriptionNumber, species.Index] += biomass_value;
-            }
-
-
-            //now that the damage table for this stand has been recorded, clear it!!
-            stand.ClearDamageTable();
-
-            //write to log file:
-            if (biomassRemoved > 0.0)
-                biomassRemovedPerHa = biomassRemoved / (double) damagedSites / modelCore.CellArea;
-
-            string name = stand.PrescriptionName;
-
-            if (repeatNumber != 0)
-            {
-                name = name + "(" + repeatNumber + ")";
-            }
-            eventLog.Clear();
-            EventsLog el = new EventsLog();
-            el.Time = modelCore.CurrentTime;
-            el.ManagementArea = mgmtArea.MapCode;
-            el.Prescription = name;
-            el.Stand = stand.MapCode;
-            el.EventID = stand.EventId;
-            el.StandAge = stand.Age;
-            el.StandRank = stand.HarvestedRank;
-            el.NumberOfSites = stand.SiteCount;
-            el.HarvestedSites = damagedSites;
-            el.MgBiomassRemoved = biomassRemoved;
-            el.MgBioRemovedPerDamagedHa = biomassRemovedPerHa;
-            el.TotalCohortsPartialHarvest = cohortsDamaged;
-            el.TotalCohortsCompleteHarvest = cohortsKilled;
-            el.CohortsHarvested_ = species_cohorts;
-            el.BiomassHarvestedMg_ = species_biomass;
-
-            eventLog.AddObject(el);
-            eventLog.WriteToFile();
+            return SiteVars.Cohorts[site].IsMaturePresent(species);
         }
 
-        public static void WriteSummaryLogEntry(ManagementArea mgmtArea, AppliedPrescription prescription, uint repeatNumber = 0, bool lastHarvest = false)
+
+        public override void InitializeSites(string initialCommunitiesText, string initialCommunitiesMap, ICore modelCore)
         {
-            double[] species_cohorts = new double[modelCore.Species.Count];
-            double[] species_biomass = new double[modelCore.Species.Count];
-            foreach (ISpecies species in modelCore.Species)
+            ModelCore.UI.WriteLine("   Loading initial communities from file \"{0}\" ...", initialCommunitiesText);
+            Landis.Library.InitialCommunities.DatasetParser parser = new Landis.Library.InitialCommunities.DatasetParser(Timestep, ModelCore.Species);
+            Landis.Library.InitialCommunities.IDataset communities = Landis.Data.Load<Landis.Library.InitialCommunities.IDataset>(initialCommunitiesText, parser);
+
+            ModelCore.UI.WriteLine("   Reading initial communities map \"{0}\" ...", initialCommunitiesMap);
+            IInputRaster<uintPixel> map;
+            map = ModelCore.OpenRaster<uintPixel>(initialCommunitiesMap);
+            using (map)
             {
-                species_cohorts[species.Index] = totalSpeciesCohorts[prescription.Prescription.Number, species.Index];
-                species_biomass[species.Index] = totalSpeciesBiomass[prescription.Prescription.Number, species.Index];
-            }
-
-            if (totalSites[prescription.Prescription.Number] > 0 && prescriptionReported[prescription.Prescription.Number] != true)
-            {
-                string name = prescription.Prescription.Name;
-
-                if (repeatNumber > 0)
+                uintPixel pixel = map.BufferPixel;
+                foreach (Site site in ModelCore.Landscape.AllSites)
                 {
-                    name = name + "(" + repeatNumber + ")";
-                }
-                summaryLog.Clear();
-                SummaryLog sl = new SummaryLog();
-                sl.Time = modelCore.CurrentTime;
-                sl.ManagementArea = mgmtArea.MapCode;
-                sl.Prescription = name;
-                sl.HarvestedSites = totalDamagedSites[prescription.Prescription.Number];
-                sl.TotalBiomassHarvested = totalBiomassRemoved[prescription.Prescription.Number];
-                sl.TotalCohortsPartialHarvest = totalCohortsDamaged[prescription.Prescription.Number];
-                sl.TotalCohortsCompleteHarvest = totalCohortsKilled[prescription.Prescription.Number];
-                sl.CohortsHarvested_ = species_cohorts;
-                sl.BiomassHarvestedMg_ = species_biomass;
-                summaryLog.AddObject(sl);
-                summaryLog.WriteToFile();
+                    map.ReadBufferPixel();
+                    uint mapCode = pixel.MapCode.Value;
+                    if (!site.IsActive)
+                        continue;
 
-                // Do not mark this as recorded until the final summary is logged. Because repeat steps will be
-                // recorded first and then new initiations, mark this as reported once the initiation step is complete
-                if (repeatNumber == 0 || (ModelCore.CurrentTime > prescription.EndTime && lastHarvest))
-                {
-                    prescriptionReported[prescription.Prescription.Number] = true;
-                }
+                    //if (!modelCore.Ecoregion[site].Active)
+                    //    continue;
 
-                // Clear the log for the initial harvests
-                if (lastHarvest)
-                {
-                    totalDamagedSites[prescription.Prescription.Number] = 0;
-                    totalBiomassRemoved[prescription.Prescription.Number] = 0;
-                    totalCohortsDamaged[prescription.Prescription.Number] = 0;
-                    totalCohortsKilled[prescription.Prescription.Number] = 0;
+                    //modelCore.Log.WriteLine("ecoregion = {0}.", modelCore.Ecoregion[site]);
 
-                    foreach (ISpecies species in modelCore.Species)
+                    ActiveSite activeSite = (ActiveSite)site;
+                    initialCommunity = communities.Find(mapCode);
+                    if (initialCommunity == null)
                     {
-                        totalSpeciesCohorts[prescription.Prescription.Number, species.Index] = 0;
-                        totalSpeciesBiomass[prescription.Prescription.Number, species.Index] = 0;
+                        throw new ApplicationException(string.Format("Unknown map code for initial community: {0}", mapCode));
                     }
+
+                    InitializeSite(activeSite); 
                 }
             }
-        }
-
-        public void AddCohortData()
-        {
-            return;
         }
     }
-}
+    }
